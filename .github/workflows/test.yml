@@ -1,0 +1,21 @@
+name: Test Petfinder API
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run test script
+        run: python test_petfinder.py
+        env:
+          PETFINDER_KEY: ${{ secrets.PETFINDER_KEY }}
+          PETFINDER_SECRET: ${{ secrets.PETFINDER_SECRET }}
