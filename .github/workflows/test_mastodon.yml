@@ -1,0 +1,21 @@
+name: Test Mastodon Posting
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-mastodon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: pip install Mastodon.py
+      - name: Run Mastodon test
+        run: python test_mastodon.py
+        env:
+          MASTODON_BASE_URL: ${{ secrets.MASTODON_BASE_URL }}
+          MASTODON_ACCESS_TOKEN: ${{ secrets.MASTODON_ACCESS_TOKEN }}
