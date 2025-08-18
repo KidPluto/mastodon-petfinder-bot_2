@@ -29,7 +29,7 @@ def get_petfinder_token():
 def get_random_pet(access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {
-        "type": "Cat,Dog",
+        "type": "Cat",
         "limit": 1,
         "sort": "random",
         "location": "02119",
@@ -77,7 +77,7 @@ def post_to_mastodon(pet):
     raw_url = pet.get("url", "")
     clean_url = raw_url.split("?")[0] if raw_url else ""
 
-    description = f"Meet {name}! 🐾 Available for adoption near Boston (02119).\n{clean_url}"
+    description = f"Meet {name}! 🐾 Available for adoption in/near Boston.\n{clean_url}"
 
     mastodon = Mastodon(
         access_token=MASTODON_ACCESS_TOKEN,
