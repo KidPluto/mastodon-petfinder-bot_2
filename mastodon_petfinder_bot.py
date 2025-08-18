@@ -18,7 +18,11 @@ def get_petfinder_token():
             "client_secret": PETFINDER_SECRET,
         },
     )
+
+    if not auth_resp.ok:
+        print("❌ Auth error:", auth_resp.status_code, auth_resp.text)
     auth_resp.raise_for_status()
+
     return auth_resp.json()["access_token"]
 
 # --- Step 2: Fetch a random pet near 02119 within 10 miles ---
@@ -28,15 +32,19 @@ def get_random_pet(access_token):
         "type": "Cat,Dog",
         "limit": 1,
         "sort": "random",
-        "location": "02119",   # ZIP filter
-        "distance": 10,        # 10 miles
+        "location": "02119",
+        "distance": 10,
     }
     resp = requests.get(
         "https://api.petfinder.com/v2/animals",
         headers=headers,
         params=params,
     )
+
+    if not resp.ok:
+        print("❌ Pet fetch error:", resp.status_code, resp.text)
     resp.raise_for_status()
+
     animals = resp.json().get("animals", [])
     return animals[0] if animals else None
 
@@ -50,31 +58,4 @@ def post_to_mastodon(pet):
 
     # Strip ?referrer_id (or any other query params) from Petfinder URL
     raw_url = pet.get("url", "")
-    clean_url = raw_url.split("?")[0] if raw_url else ""
-
-    description = f"Meet {name}! 🐾 Available for adoption near Boston (02119).\n{clean_url}"
-
-    mastodon = Mastodon(
-        access_token=MASTODON_ACCESS_TOKEN,
-        api_base_url=MASTODON_BASE_URL,
-    )
-
-    media_ids = []
-    photos = pet.get("photos", [])
-    if photos:
-        img_url = photos[0].get("large") or photos[0].get("medium")
-        if img_url:
-            img_data = requests.get(img_url)
-            img_data.raise_for_status()
-            with open("temp.jpg", "wb") as f:
-                f.write(img_data.content)
-            media = mastodon.media_post("temp.jpg", "image/jpeg")
-            media_ids.append(media["id"])
-
-    mastodon.status_post(description, media_ids=media_ids)
-    print(f"✅ Posted: {description}")
-
-if __name__ == "__main__":
-    token = get_petfinder_token()
-    pet = get_random_pet(token)
-    post_to_mastodon(pet)
+    clean_url = ra_
