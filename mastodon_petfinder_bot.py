@@ -29,7 +29,7 @@ def get_petfinder_token():
 def get_random_pet(access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {
-        "type": "Cat,Dog",
+        "type": "Cat",
         "limit": 1,
         "sort": "random",
         "location": "02119",
