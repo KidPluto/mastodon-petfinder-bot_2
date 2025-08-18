@@ -29,7 +29,7 @@ def get_petfinder_token():
 def get_random_pet(access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {
-        "type": "Cat",
+        "type": "Cat,Dog",
         "limit": 1,
         "sort": "random",
         "location": "02119",
@@ -48,7 +48,24 @@ def get_random_pet(access_token):
     animals = resp.json().get("animals", [])
     return animals[0] if animals else None
 
-# --- Step 3: Post to Mastodon ---
+# --- Step 3: Generate alt text for accessibility ---
+def generate_alt_text(pet):
+    name = pet.get("name", "Unnamed friend")
+    pet_type = pet.get("type", "Pet")
+    breeds = pet.get("breeds", {})
+    breed = breeds.get("primary") or breeds.get("secondary") or "mixed breed"
+    age = pet.get("age", "").lower()
+    gender = pet.get("gender", "").lower()
+
+    parts = [name, pet_type.lower(), breed.lower()]
+    if age:
+        parts.append(age)
+    if gender:
+        parts.append(gender)
+
+    return "Photo of " + " ".join(parts)
+
+# --- Step 4: Post to Mastodon ---
 def post_to_mastodon(pet):
     if not pet:
         print("No pet found for given filters.")
@@ -76,8 +93,11 @@ def post_to_mastodon(pet):
             img_data.raise_for_status()
             with open("temp.jpg", "wb") as f:
                 f.write(img_data.content)
-            media = mastodon.media_post("temp.jpg", "image/jpeg")
+
+            alt_text = generate_alt_text(pet)
+            media = mastodon.media_post("temp.jpg", "image/jpeg", description=alt_text)
             media_ids.append(media["id"])
+            print(f"✅ Uploaded photo with alt text: {alt_text}")
 
     mastodon.status_post(description, media_ids=media_ids)
     print(f"✅ Posted: {description}")
