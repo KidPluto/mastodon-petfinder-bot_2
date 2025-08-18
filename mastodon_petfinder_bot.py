@@ -25,7 +25,7 @@ def get_petfinder_token():
 def get_random_pet(access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {
-        "type": "Cat",
+        "type": "Cat,Dog",
         "limit": 1,
         "sort": "random",
         "location": "02119",   # ZIP filter
@@ -47,8 +47,12 @@ def post_to_mastodon(pet):
         return
 
     name = pet.get("name", "Unnamed friend")
-    url = pet.get("url", "")
-    description = f"Meet {name}! 🐾 Available for adoption near Boston (02119).\n{url}"
+
+    # Strip ?referrer_id (or any other query params) from Petfinder URL
+    raw_url = pet.get("url", "")
+    clean_url = raw_url.split("?")[0] if raw_url else ""
+
+    description = f"Meet {name}! 🐾 Available for adoption near Boston (02119).\n{clean_url}"
 
     mastodon = Mastodon(
         access_token=MASTODON_ACCESS_TOKEN,
