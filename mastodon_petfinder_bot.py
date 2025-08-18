@@ -58,4 +58,31 @@ def post_to_mastodon(pet):
 
     # Strip ?referrer_id (or any other query params) from Petfinder URL
     raw_url = pet.get("url", "")
-    clean_url = ra_
+    clean_url = raw_url.split("?")[0] if raw_url else ""
+
+    description = f"Meet {name}! 🐾 Available for adoption near Boston (02119).\n{clean_url}"
+
+    mastodon = Mastodon(
+        access_token=MASTODON_ACCESS_TOKEN,
+        api_base_url=MASTODON_BASE_URL,
+    )
+
+    media_ids = []
+    photos = pet.get("photos", [])
+    if photos:
+        img_url = photos[0].get("large") or photos[0].get("medium")
+        if img_url:
+            img_data = requests.get(img_url)
+            img_data.raise_for_status()
+            with open("temp.jpg", "wb") as f:
+                f.write(img_data.content)
+            media = mastodon.media_post("temp.jpg", "image/jpeg")
+            media_ids.append(media["id"])
+
+    mastodon.status_post(description, media_ids=media_ids)
+    print(f"✅ Posted: {description}")
+
+if __name__ == "__main__":
+    token = get_petfinder_token()
+    pet = get_random_pet(token)
+    post_to_mastodon(pet)
