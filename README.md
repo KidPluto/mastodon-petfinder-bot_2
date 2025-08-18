@@ -1,11 +1,11 @@
 # Mastodon Petfinder Bot 🐾
 
-This bot posts a random adoptable **dog or cat** from [Petfinder](https://www.petfinder.com/) to Mastodon once an hour.
+This bot posts a random adoptable **cat** from [Petfinder](https://www.petfinder.com/) to Mastodon once an hour.  Shelters in a 10 mile radius of Boston will be queried.
 
 ## Features
-- Fetches adoptable pets from Petfinder API (dogs & cats).
+- Fetches adoptable cats from Petfinder API.
 - Retries up to 5 times to ensure the pet has a photo before posting.
-- Posts pet’s name, type, age, breed, and adoption link.
+- Posts pet’s name, type, age, breed, and adoption link.  Also creates alt text for the photo, from other data about the cat.
 - Uploads the pet’s photo (if available).
 - Hashtags and post visibility configurable via environment variables.
 - Runs automatically every hour via GitHub Actions.
@@ -29,8 +29,6 @@ Here’s what a typical Mastodon post looks like (example only):
    - `MASTODON_ACCESS_TOKEN`
    - `PETFINDER_KEY`
    - `PETFINDER_SECRET`
-   - *(optional)* `POST_VISIBILITY` (`public`, `unlisted`, or `private`)
-   - *(optional)* `HASHTAGS` (e.g. `#adopt #pets #dogs #cats`)
 
 ## Workflows
 
