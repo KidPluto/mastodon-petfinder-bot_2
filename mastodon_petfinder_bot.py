@@ -1,57 +1,76 @@
 import os
-import random
 import requests
 from mastodon import Mastodon
-from dotenv import load_dotenv
 
-from test_petfinder import fetch_random_pet, get_valid_token
+# --- Load secrets from environment variables ---
+PETFINDER_KEY = os.getenv("PETFINDER_KEY")
+PETFINDER_SECRET = os.getenv("PETFINDER_SECRET")
+MASTODON_BASE_URL = os.getenv("MASTODON_BASE_URL")
+MASTODON_ACCESS_TOKEN = os.getenv("MASTODON_ACCESS_TOKEN")
 
-def get_pet_with_photo(max_retries=5):
-    for attempt in range(max_retries):
-        pet = fetch_random_pet()
-        if pet.get("primary_photo_cropped"):
-            return pet
-        print(f"Retry {attempt+1}/{max_retries}: {pet['name']} had no photo")
-    print("No pet with photo found after retries, using last one anyway")
-    return pet
+# --- Step 1: Get Petfinder API access token ---
+def get_petfinder_token():
+    auth_resp = requests.post(
+        "https://api.petfinder.com/v2/oauth2/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": PETFINDER_KEY,
+            "client_secret": PETFINDER_SECRET,
+        },
+    )
+    auth_resp.raise_for_status()
+    return auth_resp.json()["access_token"]
 
-def main():
-    load_dotenv()
-    pet = get_pet_with_photo()
-    print("---- Posting Pet ----")
-    print(f"Name: {pet['name']}")
-    print(f"Type: {pet['type']}, Age: {pet['age']}, Breed: {pet['breeds']['primary']}")
-    print(f"URL: {pet['url']}")
-    if pet.get("primary_photo_cropped"):
-        print(f"Photo: {pet['primary_photo_cropped']['large']}")
+# --- Step 2: Fetch a random pet near 02119 within 10 miles ---
+def get_random_pet(access_token):
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params = {
+        "type": "Cat",
+        "limit": 1,
+        "sort": "random",
+        "location": "02119",   # ZIP filter
+        "distance": 10,        # 10 miles
+    }
+    resp = requests.get(
+        "https://api.petfinder.com/v2/animals",
+        headers=headers,
+        params=params,
+    )
+    resp.raise_for_status()
+    animals = resp.json().get("animals", [])
+    return animals[0] if animals else None
+
+# --- Step 3: Post to Mastodon ---
+def post_to_mastodon(pet):
+    if not pet:
+        print("No pet found for given filters.")
+        return
+
+    name = pet.get("name", "Unnamed friend")
+    url = pet.get("url", "")
+    description = f"Meet {name}! 🐾 Available for adoption near Boston (02119).\n{url}"
 
     mastodon = Mastodon(
-        access_token=os.getenv("MASTODON_ACCESS_TOKEN"),
-        api_base_url=os.getenv("MASTODON_BASE_URL"),
+        access_token=MASTODON_ACCESS_TOKEN,
+        api_base_url=MASTODON_BASE_URL,
     )
-    status = f"Meet {pet['name']}! {pet['type']} ({pet['age']}, {pet['breeds']['primary']}) — {pet['url']}"
-    if os.getenv("HASHTAGS"):
-        status += "\n" + os.getenv("HASHTAGS")
 
-    media_id = None
-    if pet.get("primary_photo_cropped"):
-        img_url = pet["primary_photo_cropped"]["large"]
-        try:
-            resp = requests.get(img_url, timeout=15)
-            resp.raise_for_status()
-            with open("pet.jpg", "wb") as f:
-                f.write(resp.content)
-            media_id = mastodon.media_post("pet.jpg")
-            print("Photo uploaded successfully")
-        except Exception as e:
-            print(f"Warning: could not upload photo: {e}")
+    media_ids = []
+    photos = pet.get("photos", [])
+    if photos:
+        img_url = photos[0].get("large") or photos[0].get("medium")
+        if img_url:
+            img_data = requests.get(img_url)
+            img_data.raise_for_status()
+            with open("temp.jpg", "wb") as f:
+                f.write(img_data.content)
+            media = mastodon.media_post("temp.jpg", "image/jpeg")
+            media_ids.append(media["id"])
 
-    mastodon.status_post(
-        status,
-        media_ids=[media_id] if media_id else None,
-        visibility=os.getenv("POST_VISIBILITY", "public")
-    )
-    print("Post successful!")
+    mastodon.status_post(description, media_ids=media_ids)
+    print(f"✅ Posted: {description}")
 
 if __name__ == "__main__":
-    main()
+    token = get_petfinder_token()
+    pet = get_random_pet(token)
+    post_to_mastodon(pet)
