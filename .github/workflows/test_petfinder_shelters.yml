@@ -1,0 +1,21 @@
+name: Test Petfinder Shelters
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-petfinder-shelters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run Petfinder shelters test
+        run: python test_petfinder_shelters.py
+        env:
+          PETFINDER_KEY: ${{ secrets.PETFINDER_KEY }}
+          PETFINDER_SECRET: ${{ secrets.PETFINDER_SECRET }}
