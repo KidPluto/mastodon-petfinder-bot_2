@@ -1,4 +1,5 @@
 I was attempting to not have to write, or look at the code, when creating this bot.  I was mostly successful at that. 
+
 The Petfinder API will fail every once and a while.  When that happened I tried looking at the code, until I realized it was just an intermittent thing, it was a problem with the code.
 
 At one point it offered a query for Dogs & Cats, only to afterwards admit only one type of pet could be queried at a time.
