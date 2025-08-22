@@ -34,6 +34,8 @@ Here’s what a typical Mastodon post looks like (example only):
 
 - **bot.yml** → Runs hourly, posts to Mastodon.
 - **test.yml** → Can be triggered manually from GitHub Actions to test the Petfinder API and print debug info.
+- **test_mastodon.yml** 
+- **test_petfinder_shelters.yml**
 
 ## Local Testing
 
