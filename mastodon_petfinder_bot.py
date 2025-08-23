@@ -1,12 +1,30 @@
 import os
 import requests
 from mastodon import Mastodon
+import json
+from datetime import datetime, timedelta
 
 # --- Load secrets from environment variables ---
 PETFINDER_KEY = os.getenv("PETFINDER_KEY")
 PETFINDER_SECRET = os.getenv("PETFINDER_SECRET")
 MASTODON_BASE_URL = os.getenv("MASTODON_BASE_URL")
 MASTODON_ACCESS_TOKEN = os.getenv("MASTODON_ACCESS_TOKEN")
+POSTED_CATS_FILE = 'posted_cats.json'
+
+# --- Functions to support not repeating posts ---
+def load_posted_cats():
+    if os.path.exists(POSTED_CATS_FILE):
+        with open(POSTED_CATS_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+def save_posted_cats(posted_cats):
+    with open(POSTED_CATS_FILE, 'w') as f:
+        json.dump(posted_cats, f)
+
+def get_recent_cat_ids(posted_cats, days=7):
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    return {entry['id'] for entry in posted_cats if datetime.fromisoformat(entry['date']) > cutoff}
 
 # --- Step 1: Get Petfinder API access token ---
 def get_petfinder_token():
@@ -104,5 +122,36 @@ def post_to_mastodon(pet):
 
 if __name__ == "__main__":
     token = get_petfinder_token()
-    pet = get_random_pet(token)
-    post_to_mastodon(pet)
+    posted_cats = load_posted_cats()
+    recent_cat_ids = get_recent_cat_ids(posted_cats)
+
+    # Fetch up to 10 cats to find one not posted recently
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {
+        "type": "Cat",
+        "limit": 10,
+        "sort": "random",
+        "location": "02119",
+        "distance": 10,
+    }
+    resp = requests.get(
+        "https://api.petfinder.com/v2/animals",
+        headers=headers,
+        params=params,
+    )
+    resp.raise_for_status()
+    animals = resp.json().get("animals", [])
+
+    pet = None
+    for candidate in animals:
+        if candidate['id'] not in recent_cat_ids:
+            pet = candidate
+            break
+
+    if pet:
+        post_to_mastodon(pet)
+        posted_cats.append({'id': pet['id'], 'date': datetime.utcnow().isoformat()})
+        save_posted_cats(posted_cats)
+    else:
+        print("No new cats to post this week.")
+
