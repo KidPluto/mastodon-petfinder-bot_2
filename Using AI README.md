@@ -15,4 +15,5 @@ Copilot says - To fix unresolved imports run in your terminal: "pip install requ
 
 Two hours later, after using 3 different AIs, I finally figure out that IntelliJ community edition doesn't support Python.  I'm not trying to run this script on my laptop, but I figured it would be nice to get rid of the errors / warnings which I'm seeing in the editor.  And part of that time was spent spinning my wheels because I had a space in the path to the python interpreter.  Thanks Windows. 
 
+It stopped letting me be able to sign into CoPilot.  Giving JetBrains AI a chance at answering my questions.
 
