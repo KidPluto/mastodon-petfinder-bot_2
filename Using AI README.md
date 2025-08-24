@@ -13,4 +13,6 @@ I tell it to regenerate the entire script when giving me new code and to add com
 
 Copilot says - To fix unresolved imports run in your terminal: "pip install requests Mastodon.py" and will let me select but not copy that text string.  Ugh.
 
+Two hours later, after using 3 different AIs, I finally figure out that IntelliJ community edition doesn't support Python.  I'm not trying to run this script on my laptop, but I figured it would be nice to get rid of the errors / warnings which I'm seeing in the editor.  And part of that time was spent spinning my wheels because I had a space in the path to the python interpreter.  Thanks Windows. 
+
 

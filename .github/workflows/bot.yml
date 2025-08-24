@@ -2,7 +2,7 @@ name: Mastodon Petfinder Bot
 
 on:
   schedule:
-    - cron: "0 * * * *"  # Run hourly
+    - cron: "0 */2 * * *"  # Run every other hourly
   workflow_dispatch:
 
 jobs:
