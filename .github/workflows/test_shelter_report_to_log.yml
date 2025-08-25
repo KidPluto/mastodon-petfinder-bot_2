@@ -1,0 +1,26 @@
+# .github/workflows/test_shelter_report_to_log.yml
+name: Test Shelter Report to Log
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-shelter-report-to-log:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate report (log only)
+        env:
+          PETFINDER_KEY: ${{ secrets.PETFINDER_KEY }}
+          PETFINDER_SECRET: ${{ secrets.PETFINDER_SECRET }}
+        run: python test_shelter_report_to_log.py
