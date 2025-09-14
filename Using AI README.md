@@ -17,3 +17,4 @@ Two hours later, after using 3 different AIs, I finally figure out that IntelliJ
 
 It stopped letting me be able to sign into CoPilot.  Giving JetBrains AI a chance at answering my questions.
 
+I've been switching between using ChatGcp on the web, Copilot and AI Chat in Intellij without paying attention to which one I've been using.  So when my bot stopped working and I asked one of those to add logging it said something like "I also fixed a bug which broke your bot."  And not I don't remember which one coded the bug or fixed it. 
