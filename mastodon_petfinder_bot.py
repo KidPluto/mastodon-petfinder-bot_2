@@ -1,222 +1,254 @@
-#!/usr/bin/env python3
-"""
-Mastodon Petfinder Bot
-
-Posts a random adoptable Cat from Petfinder (near 02119 within 10 miles) to Mastodon.
-- Avoids re-posting the same cat within the last 7 days by tracking IDs in posted_cats.json
-- Retries fetching in multiple random batches so we don't give up too early
-- Adds a random cat-themed icon to each post (instead of fixed paws)
-- Generates alt text for accessibility if an image is uploaded
-- Handles intermittent Petfinder failures with simple retry/backoff
-"""
-
 import os
-import json
-import random
-import time
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
-
 import requests
 from mastodon import Mastodon
+import json
+from datetime import datetime, timedelta
+import logging
+import sys
+import traceback
 
-# ========== Configuration via environment ==========
+# --- Load secrets from environment variables ---
 PETFINDER_KEY = os.getenv("PETFINDER_KEY")
 PETFINDER_SECRET = os.getenv("PETFINDER_SECRET")
-
 MASTODON_BASE_URL = os.getenv("MASTODON_BASE_URL")
 MASTODON_ACCESS_TOKEN = os.getenv("MASTODON_ACCESS_TOKEN")
+POSTED_CATS_FILE = 'posted_cats.json'
 
-# Location settings
-PET_LOCATION = os.getenv("PET_LOCATION", "02119")
-PET_DISTANCE_MILES = int(os.getenv("PET_DISTANCE_MILES", "10"))
+# Configure logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+logger = logging.getLogger("mastodon-petfinder-bot")
+logger.info("Starting Mastodon Petfinder Bot")
+logger.debug(f"Environment: LOG_LEVEL={LOG_LEVEL}, CWD={os.getcwd()}")
 
-# File to track which cats were posted recently (for de-duplication)
-POSTED_CATS_FILE = os.getenv("POSTED_CATS_FILE", "posted_cats.json")
+def _redact(value: str, keep_last: int = 4) -> str:
+    if not value:
+        return "<missing>"
+    if len(value) <= keep_last:
+        return "*" * len(value)
+    return "*" * (len(value) - keep_last) + value[-keep_last:]
 
-# How many days to remember posted cats (used for pruning and skip logic)
-RECENT_DAYS = int(os.getenv("RECENT_DAYS", "7"))
+# Log environment presence (redacted for secrets)
+logger.info(f"Env check: PETFINDER_KEY={_redact(PETFINDER_KEY)} "
+            f"PETFINDER_SECRET={_redact(PETFINDER_SECRET)} "
+            f"MASTODON_BASE_URL={MASTODON_BASE_URL or '<missing>'} "
+            f"MASTODON_ACCESS_TOKEN={_redact(MASTODON_ACCESS_TOKEN)}")
+logger.info(f"Posted-cats file path: {os.path.abspath(POSTED_CATS_FILE)}")
 
-# Network timeouts (seconds)
-HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "15"))
-
-# How many random batches to attempt before giving up (helps avoid “no new cats” too early)
-MAX_RANDOM_BATCH_ATTEMPTS = int(os.getenv("MAX_RANDOM_BATCH_ATTEMPTS", "6"))
-
-# How many animals to fetch per batch
-BATCH_LIMIT = int(os.getenv("BATCH_LIMIT", "50"))
-
-# ========== Random cat-themed icons ==========
-# Will choose one per post
-CAT_ICONS = [
-    "😺", "😸", "😻", "🐱", "🐈", "🐈‍⬛", "🧶", "😼", "😽", "😹", "🐾", "🎀", "🪶"
-]
-
-def get_random_cat_icon() -> str:
-    return random.choice(CAT_ICONS)
-
-# ========== Local store helpers ==========
-def load_posted_cats() -> List[Dict]:
-    """
-    Load the local JSON file tracking posted cats.
-    Returns an empty list if file does not exist or is unreadable.
-    """
-    if os.path.exists(POSTED_CATS_FILE):
-        try:
-            with open(POSTED_CATS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    return data
-        except Exception as e:
-            print(f"⚠️ Could not read {POSTED_CATS_FILE}: {e}")
-    return []
-
-def save_posted_cats(posted_cats: List[Dict]) -> None:
-    """
-    Persist the posted cats list to disk (ensures file is created).
-    """
+# --- Functions to support not repeating posts ---
+def load_posted_cats():
     try:
-        with open(POSTED_CATS_FILE, "w", encoding="utf-8") as f:
-            json.dump(posted_cats, f, ensure_ascii=False, indent=2)
+        if os.path.exists(POSTED_CATS_FILE):
+            with open(POSTED_CATS_FILE, 'r') as f:
+                data = json.load(f)
+                logger.info(f"Loaded {len(data)} posted cat entries")
+                return data
+        logger.info("Posted cats file does not exist yet; starting fresh.")
+        return []
     except Exception as e:
-        print(f"⚠️ Could not write {POSTED_CATS_FILE}: {e}")
+        logger.error(f"Failed to load posted cats file: {e}")
+        logger.debug("Traceback:\n" + traceback.format_exc())
+        return []
 
-def prune_posted_cats(posted_cats: List[Dict], days: int = RECENT_DAYS) -> List[Dict]:
-    """
-    Keep only entries newer than cutoff days.
-    Each entry is expected to be {'id': <int>, 'date': <iso string>}
-    """
-    cutoff = datetime.utcnow() - timedelta(days=days)
-    pruned = []
-    for entry in posted_cats:
-        try:
-            when = datetime.fromisoformat(entry.get("date", ""))
-            if when > cutoff:
-                pruned.append(entry)
-        except Exception:
-            # If malformed, drop it to keep file clean
-            continue
-    return pruned
+def save_posted_cats(posted_cats):
+    try:
+        with open(POSTED_CATS_FILE, 'w') as f:
+            json.dump(posted_cats, f)
+        logger.info(f"Saved {len(posted_cats)} posted cat entries")
+    except Exception as e:
+        logger.error(f"Failed to save posted cats file: {e}")
+        logger.debug("Traceback:\n" + traceback.format_exc())
 
-def get_recent_cat_ids(posted_cats: List[Dict], days: int = RECENT_DAYS) -> set:
-    """
-    Return a set of IDs posted within the last 'days'.
-    """
+def get_recent_cat_ids(posted_cats, days=7):
     cutoff = datetime.utcnow() - timedelta(days=days)
-    recent = set()
-    for entry in posted_cats:
-        try:
-            when = datetime.fromisoformat(entry.get("date", ""))
-            if when > cutoff:
-                recent.add(entry["id"])
-        except Exception:
-            continue
+    recent = {entry['id'] for entry in posted_cats if datetime.fromisoformat(entry['date']) > cutoff}
+    logger.info(f"{len(recent)} posted cat IDs within the last {days} days")
     return recent
 
-# ========== Petfinder API helpers ==========
-def get_petfinder_token(max_retries: int = 3, backoff_base: float = 1.5) -> str:
-    """
-    Fetches Petfinder API OAuth token with simple retries to handle intermittent failures.
-    """
-    if not PETFINDER_KEY or not PETFINDER_SECRET:
-        raise RuntimeError("Missing PETFINDER_KEY or PETFINDER_SECRET environment variables.")
+# --- NEW: Prune entries older than 7 days ---
+def prune_posted_cats(posted_cats, days=7):
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    pruned = [entry for entry in posted_cats if datetime.fromisoformat(entry['date']) > cutoff]
+    removed = len(posted_cats) - len(pruned)
+    if removed:
+        logger.info(f"Pruned {removed} entries older than {days} days")
+    else:
+        logger.info("No old entries to prune")
+    return pruned
 
-    url = "https://api.petfinder.com/v2/oauth2/token"
-    form = {
-        "grant_type": "client_credentials",
-        "client_id": PETFINDER_KEY,
-        "client_secret": PETFINDER_SECRET,
-    }
+# --- Step 1: Get Petfinder API access token ---
+def get_petfinder_token():
+    logger.info("Requesting Petfinder API token...")
+    auth_resp = requests.post(
+        "https://api.petfinder.com/v2/oauth2/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": PETFINDER_KEY,
+            "client_secret": PETFINDER_SECRET,
+        },
+    )
+    if not auth_resp.ok:
+        logger.error(f"Auth error: {auth_resp.status_code} {auth_resp.text}")
+    auth_resp.raise_for_status()
+    token = auth_resp.json().get("access_token")
+    logger.info("Petfinder token acquired successfully")
+    return token
 
-    for attempt in range(1, max_retries + 1):
-        try:
-            resp = requests.post(url, data=form, timeout=HTTP_TIMEOUT)
-            if resp.ok:
-                token = resp.json()["access_token"]
-                return token
-            else:
-                print(f"❌ Token error (attempt {attempt}): {resp.status_code} {resp.text}")
-        except requests.RequestException as e:
-            print(f"❌ Token request failed (attempt {attempt}): {e}")
+# --- Step 2: Fetch a random pet near 02119 within 10 miles ---
+def get_random_pet(access_token):
+    # ... existing code ...
+    pass
+    # ... existing code ...
 
-        if attempt < max_retries:
-            sleep_s = backoff_base ** attempt + random.uniform(0, 0.5)
-            time.sleep(sleep_s)
-
-    raise RuntimeError("Unable to obtain Petfinder token after retries.")
-
-def get_random_cats(access_token: str, limit: int = BATCH_LIMIT) -> List[Dict]:
-    """
-    Fetch a random batch of cats near the configured location/distance.
-    """
-    url = "https://api.petfinder.com/v2/animals"
+# --- Step 2: Fetch up to 10 random cats near 02119 within 10 miles ---
+def get_random_cats(access_token, limit=10):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {
         "type": "Cat",
         "limit": limit,
         "sort": "random",
-        "location": PET_LOCATION,
-        "distance": PET_DISTANCE_MILES,
-        "status": "adoptable",
+        "location": "02119",
+        "distance": 10,
     }
-    resp = requests.get(url, headers=headers, params=params, timeout=HTTP_TIMEOUT)
+    logger.info(f"Fetching up to {limit} random cats from Petfinder...")
+    resp = requests.get(
+        "https://api.petfinder.com/v2/animals",
+        headers=headers,
+        params=params,
+    )
+    logger.debug(f"Petfinder request URL: {resp.url}")
     if not resp.ok:
-        print(f"❌ Pet fetch error: {resp.status_code} {resp.text}")
-        resp.raise_for_status()
-    return resp.json().get("animals", []) or []
+        logger.error(f"Pet fetch error: {resp.status_code} {resp.text}")
+    resp.raise_for_status()
+    animals = resp.json().get("animals", [])
+    logger.info(f"Received {len(animals)} animals from Petfinder")
+    return animals
 
-# ========== Content helpers ==========
-def generate_alt_text(pet: Dict) -> str:
-    """
-    Create simple, readable alt text for the first image of the pet.
-    """
+# --- Step 3: Generate alt text for accessibility ---
+def generate_alt_text(pet):
     name = pet.get("name", "Unnamed friend")
     pet_type = pet.get("type", "Pet")
-    breeds = pet.get("breeds", {}) or {}
+    breeds = pet.get("breeds", {})
     breed = breeds.get("primary") or breeds.get("secondary") or "mixed breed"
-    age = (pet.get("age") or "").lower()
-    gender = (pet.get("gender") or "").lower()
-
+    age = pet.get("age", "").lower()
+    gender = pet.get("gender", "").lower()
     parts = [name, pet_type.lower(), breed.lower()]
     if age:
         parts.append(age)
     if gender:
         parts.append(gender)
-    return "Photo of " + " ".join(parts)
+    alt = "Photo of " + " ".join(parts)
+    logger.debug(f"Generated alt text: {alt}")
+    return alt
 
-def build_status_text(pet: Dict) -> str:
-    """
-    Compose the Mastodon status text, including a random cat-themed icon.
-    """
-    icon = get_random_cat_icon()
+# --- Step 4: Post to Mastodon ---
+def post_to_mastodon(pet):
+    if not pet:
+        logger.warning("No pet found for given filters.")
+        return
+    pet_id = pet.get("id")
     name = pet.get("name", "Unnamed friend")
-    raw_url = pet.get("url", "") or ""
+    logger.info(f"Preparing to post pet to Mastodon: id={pet_id}, name={name}")
+
+    # Strip ?referrer_id (or any other query params) from Petfinder URL
+    raw_url = pet.get("url", "")
     clean_url = raw_url.split("?")[0] if raw_url else ""
-    return f"{icon} Meet {name}! Available for adoption in/near Boston.\n{clean_url}"
+    description = f"Meet {name}! 🐾 Available for adoption in/near Boston.\n{clean_url}"
+    logger.debug(f"Post description: {description}")
 
-def choose_pet_to_post(access_token: str, recent_ids: set) -> Tuple[Optional[Dict], int]:
-    """
-    Attempt multiple random batches to find a cat that hasn't been posted recently.
-    Preference: pick a pet with at least one photo; otherwise allow text-only.
-    Returns (pet, total_candidates_seen)
-    """
-    total_seen = 0
-    for attempt in range(1, MAX_RANDOM_BATCH_ATTEMPTS + 1):
-        animals = get_random_cats(access_token, limit=BATCH_LIMIT)
-        total_seen += len(animals)
+    try:
+        mastodon = Mastodon(
+            access_token=MASTODON_ACCESS_TOKEN,
+            api_base_url=MASTODON_BASE_URL,
+        )
+        logger.info("Initialized Mastodon client")
+    except Exception as e:
+        logger.error(f"Failed to initialize Mastodon client: {e}")
+        logger.debug("Traceback:\n" + traceback.format_exc())
+        raise
 
-        # Filter out recently posted
-        new_candidates = [a for a in animals if a.get("id") not in recent_ids]
+    media_ids = []
+    photos = pet.get("photos", [])
+    if photos:
+        img_url = photos[0].get("large") or photos[0].get("medium") or photos[0].get("small")
+        logger.info(f"Attempting to upload photo from: {img_url}")
+        if img_url:
+            try:
+                img_data = requests.get(img_url)
+                logger.debug(f"Image GET status: {img_data.status_code} url={img_data.url}")
+                img_data.raise_for_status()
+                with open("temp.jpg", "wb") as f:
+                    f.write(img_data.content)
+                alt_text = generate_alt_text(pet)
+                media = mastodon.media_post("temp.jpg", "image/jpeg", description=alt_text)
+                media_ids.append(media["id"])
+                logger.info(f"Uploaded photo with alt text. media_id={media['id']}")
+            except Exception as e:
+                logger.error(f"Failed to upload media: {e}")
+                logger.debug("Traceback:\n" + traceback.format_exc())
+        else:
+            logger.info("No usable image URL found for this pet")
+    else:
+        logger.info("This pet has no photos; posting text-only status")
 
-        if not new_candidates:
-            print(f"ℹ️ Attempt {attempt}/{MAX_RANDOM_BATCH_ATTEMPTS}: all {len(animals)} were posted recently. Trying another random batch...")
-            continue
+    try:
+        status = mastodon.status_post(description, media_ids=media_ids)
+        status_id = status.get("id")
+        logger.info(f"Posted to Mastodon. status_id={status_id}")
+    except Exception as e:
+        logger.error(f"Failed to post status: {e}")
+        logger.debug("Traceback:\n" + traceback.format_exc())
+        raise
 
-        # Prefer candidates that have photos
-        with_photos = [a for a in new_candidates if a.get("photos")]
-        chosen = random.choice(with_photos or new_candidates)
-        return chosen, total_seen
+if __name__ == "__main__":
+    try:
+        # Validate env early to fail fast in Actions logs
+        missing = []
+        if not PETFINDER_KEY: missing.append("PETFINDER_KEY")
+        if not PETFINDER_SECRET: missing.append("PETFINDER_SECRET")
+        if not MASTODON_BASE_URL: missing.append("MASTODON_BASE_URL")
+        if not MASTODON_ACCESS_TOKEN: missing.append("MASTODON_ACCESS_TOKEN")
+        if missing:
+            logger.error(f"Missing required environment variables: {', '.join(missing)}")
+            sys.exit(1)
 
-    return None, total_seen
+        token = get_petfinder_token()
+        posted_cats = load_posted_cats()
+        recent_cat_ids = get_recent_cat_ids(posted_cats)
 
-# ========== Mastodon helpers
+        # --- Fetch up to 10 cats to find one not posted recently ---
+        animals = get_random_cats(token, limit=10)
+        logger.info("Selecting first animal not posted in the last 7 days...")
+        pet = None
+        for idx, candidate in enumerate(animals):
+            cid = candidate.get('id')
+            logger.debug(f"Candidate {idx+1}/{len(animals)}: id={cid} "
+                         f"{'(recently posted)' if cid in recent_cat_ids else '(new)'}")
+            if cid not in recent_cat_ids:
+                pet = candidate
+                break
+
+        if pet:
+            logger.info(f"Selected pet id={pet.get('id')} name={pet.get('name')}")
+            post_to_mastodon(pet)
+            posted_cats.append({'id': pet['id'], 'date': datetime.utcnow().isoformat()})
+            # --- NEW: Prune old entries before saving ---
+            posted_cats = prune_posted_cats(posted_cats)
+            save_posted_cats(posted_cats)
+            logger.info("Completed run successfully")
+        else:
+            logger.warning("No new cats to post from the fetched batch.")
+            # --- UPDATED: More descriptive message ---
+            logger.info("Of the 10 random cats fetched, all had been posted in the last week.")
+            logger.info("Consider increasing limit or adjusting filters if this persists.")
+    except requests.HTTPError as http_err:
+        logger.error(f"HTTP error during run: {http_err}")
+        logger.debug("Traceback:\n" + traceback.format_exc())
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error during run: {e}")
+        logger.debug("Traceback:\n" + traceback.format_exc())
+        sys.exit(1)
