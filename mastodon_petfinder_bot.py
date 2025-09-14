@@ -94,7 +94,7 @@ def post_to_mastodon(pet):
         return
 
     # Random cat-related icon
-    cat_icons = ["🐾", "🐱", "😺", "🐈", "🐈‍⬛", "😸", "😻", "😽", "😼", "🧶"]
+    cat_icons = ["🐾", "🐱", "😺", "🐈", "🐈‍⬛", "😸", "😻", "😽", "😼"]
     icon = random.choice(cat_icons)
 
     name = pet.get("name", "Unnamed friend")
