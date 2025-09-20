@@ -2,7 +2,7 @@
 
 This bot posts a random adoptable cat from Petfinder to Mastodon every two hours. It searches shelters within a 10 mile radius of Boston (02119).
 
-## Features
+## Featuress
 - Fetches adoptable cats from the Petfinder API.
 - Avoids reposting the same cat within the last 7 days (tracked in a local JSON file).
 - Ensures posts include a clean link back to the Petfinder listing.
